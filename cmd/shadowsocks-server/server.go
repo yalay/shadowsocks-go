@@ -90,7 +90,7 @@ const logCntDelta = 100
 var connCnt int
 var nextLogConnCnt int = logCntDelta
 
-func handleConnection(conn *ss.Conn) {
+func handleConnection(conn *ss.Conn, forbidHosts map[string]bool) {
 	var host string
 
 	connCnt++ // this maybe not accurate, but should be enough
@@ -124,6 +124,7 @@ func handleConnection(conn *ss.Conn) {
 		return
 	}
 	debug.Println("connecting", host)
+
 	remote, err := net.Dial("tcp", host)
 	if err != nil {
 		if ne, ok := err.(*net.OpError); ok && (ne.Err == syscall.EMFILE || ne.Err == syscall.ENFILE) {
@@ -254,7 +255,7 @@ func waitSignal() {
 	}
 }
 
-func run(port, password string) {
+func run(port, password string, forbidHosts map[string]bool) {
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Printf("error listening port %v: %v\n", port, err)
@@ -280,7 +281,7 @@ func run(port, password string) {
 				continue
 			}
 		}
-		go handleConnection(ss.NewConn(conn, cipher.Copy()))
+		go handleConnection(ss.NewConn(conn, cipher.Copy()), forbidHosts)
 	}
 }
 
@@ -302,6 +303,18 @@ func unifyPortPassword(config *ss.Config) (err error) {
 		}
 	}
 	return
+}
+
+func slice2Set(hosts []string) map[string]bool {
+	if len(hosts) == 0 {
+		return nil
+	}
+
+	hostMap := make(map[string]bool)
+	for _, host := range hosts {
+		hostMap[host] = true
+	}
+	return hostMap
 }
 
 var configFile string
@@ -356,8 +369,10 @@ func main() {
 	if core > 0 {
 		runtime.GOMAXPROCS(core)
 	}
+
+	forbidHosts := slice2Set(config.ForbidHost)
 	for port, password := range config.PortPassword {
-		go run(port, password)
+		go run(port, password, forbidHosts)
 	}
 
 	waitSignal()

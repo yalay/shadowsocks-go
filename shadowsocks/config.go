@@ -33,6 +33,9 @@ type Config struct {
 	// The order of servers in the client config is significant, so use array
 	// instead of map to preserve the order.
 	ServerPassword [][]string `json:"server_password"`
+
+	// 禁止host,比如youtube.com
+	ForbidHost []string `json:"forbid_host"`
 }
 
 var readTimeout time.Duration
