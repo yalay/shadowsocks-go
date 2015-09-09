@@ -13,6 +13,7 @@ import (
 	"runtime"
 	ss "shadowsocks"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"util"
@@ -90,6 +91,7 @@ const logCntDelta = 100
 
 var connCnt int
 var nextLogConnCnt int = logCntDelta
+var invalidHostPrefix = []string{"127.", "192.168.", "10."}
 
 func handleConnection(conn *ss.Conn, forbidHosts util.Set) {
 	var host string
@@ -123,6 +125,13 @@ func handleConnection(conn *ss.Conn, forbidHosts util.Set) {
 	if err != nil {
 		log.Println("error getting request", conn.RemoteAddr(), conn.LocalAddr(), err)
 		return
+	}
+
+	// 校验host合法性，不能是本地地址
+	for _, prefix := range invalidHostPrefix {
+		if strings.HasPrefix(host, prefix) {
+			log.Println("invalid host:", host)
+		}
 	}
 
 	if forbidHosts.Contains(host) {
