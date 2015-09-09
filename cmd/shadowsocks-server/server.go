@@ -125,11 +125,10 @@ func handleConnection(conn *ss.Conn, forbidHosts map[string]bool) {
 	}
 
 	if _, ok := forbidHosts[host]; ok {
-		log.Println("host forbid", host)
+		log.Println("host forbid:", host)
 		return
 	}
 	debug.Println("connecting", host)
-
 	remote, err := net.Dial("tcp", host)
 	if err != nil {
 		if ne, ok := err.(*net.OpError); ok && (ne.Err == syscall.EMFILE || ne.Err == syscall.ENFILE) {
@@ -318,6 +317,7 @@ func slice2Set(hosts []string) map[string]bool {
 
 	hostMap := make(map[string]bool)
 	for _, host := range hosts {
+		fmt.Fprintf(os.Stderr, "forbidden host:%s\n", host)
 		hostMap[host] = true
 	}
 	return hostMap
