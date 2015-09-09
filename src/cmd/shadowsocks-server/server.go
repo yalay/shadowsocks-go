@@ -134,8 +134,10 @@ func handleConnection(conn *ss.Conn, forbidHosts util.Set) {
 		}
 	}
 
-	if forbidHosts.Contains(host) {
-		log.Println("host forbid:", host)
+	// host是带有端口号
+	ipAddr := host[:strings.IndexByte(host, ':')]
+	if forbidHosts.Contains(ipAddr) {
+		debug.Println("host forbid:", host)
 		return
 	}
 	debug.Println("connecting", host)
