@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+	"util"
 )
 
 var debug ss.DebugLog
@@ -90,7 +91,7 @@ const logCntDelta = 100
 var connCnt int
 var nextLogConnCnt int = logCntDelta
 
-func handleConnection(conn *ss.Conn, forbidHosts map[string]bool) {
+func handleConnection(conn *ss.Conn, forbidHosts util.Set) {
 	var host string
 
 	connCnt++ // this maybe not accurate, but should be enough
@@ -124,7 +125,7 @@ func handleConnection(conn *ss.Conn, forbidHosts map[string]bool) {
 		return
 	}
 
-	if _, ok := forbidHosts[host]; ok {
+	if forbidHosts.Contains(host) {
 		log.Println("host forbid:", host)
 		return
 	}
@@ -200,7 +201,7 @@ func (pm *PasswdManager) del(port string) {
 // port. A different approach would be directly change the password used by
 // that port, but that requires **sharing** password between the port listener
 // and password manager.
-func (pm *PasswdManager) updatePortPasswd(port, password string, forbidHosts map[string]bool) {
+func (pm *PasswdManager) updatePortPasswd(port, password string, forbidHosts util.Set) {
 	pl, ok := pm.get(port)
 	if !ok {
 		log.Printf("new port %s added\n", port)
@@ -218,6 +219,18 @@ func (pm *PasswdManager) updatePortPasswd(port, password string, forbidHosts map
 
 var passwdManager = PasswdManager{portListener: map[string]*PortListener{}}
 
+func getPortForbidHosts(config *ss.Config, port string) (hosts util.Set) {
+	hostConfig := config.PortForbidHost
+	if forbidHosts, ok := hostConfig[port]; ok {
+		hosts = util.StringSliceToSet(forbidHosts)
+	} else {
+		hosts = nil
+	}
+
+	log.Printf("port %s forbid:%v", port, hosts)
+	return
+}
+
 func updatePasswd() {
 	log.Println("updating password")
 	newconfig, err := ss.ParseConfig(configFile)
@@ -231,8 +244,9 @@ func updatePasswd() {
 	if err = unifyPortPassword(config); err != nil {
 		return
 	}
-	forbidHosts := slice2Set(config.ForbidHost)
+
 	for port, passwd := range config.PortPassword {
+		forbidHosts := getPortForbidHosts(config, port)
 		passwdManager.updatePortPasswd(port, passwd, forbidHosts)
 		if oldconfig.PortPassword != nil {
 			delete(oldconfig.PortPassword, port)
@@ -260,7 +274,7 @@ func waitSignal() {
 	}
 }
 
-func run(port, password string, forbidHosts map[string]bool) {
+func run(port, password string, forbidHosts util.Set) {
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Printf("error listening port %v: %v\n", port, err)
@@ -308,19 +322,6 @@ func unifyPortPassword(config *ss.Config) (err error) {
 		}
 	}
 	return
-}
-
-func slice2Set(hosts []string) map[string]bool {
-	if len(hosts) == 0 {
-		return nil
-	}
-
-	hostMap := make(map[string]bool)
-	for _, host := range hosts {
-		fmt.Fprintf(os.Stderr, "forbidden host:%s\n", host)
-		hostMap[host] = true
-	}
-	return hostMap
 }
 
 var configFile string
@@ -376,9 +377,10 @@ func main() {
 		runtime.GOMAXPROCS(core)
 	}
 
-	forbidHosts := slice2Set(config.ForbidHost)
 	for port, password := range config.PortPassword {
+		forbidHosts := getPortForbidHosts(config, port)
 		go run(port, password, forbidHosts)
+
 	}
 
 	waitSignal()

@@ -34,8 +34,8 @@ type Config struct {
 	// instead of map to preserve the order.
 	ServerPassword [][]string `json:"server_password"`
 
-	// 禁止host,比如youtube.com
-	ForbidHost []string `json:"forbid_host"`
+	// 按照端口禁止host,比如baidu.com
+	PortForbidHost map[string][]string `json:"port_forbid_host"`
 }
 
 var readTimeout time.Duration
