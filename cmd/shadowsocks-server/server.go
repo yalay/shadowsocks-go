@@ -123,6 +123,11 @@ func handleConnection(conn *ss.Conn, forbidHosts map[string]bool) {
 		log.Println("error getting request", conn.RemoteAddr(), conn.LocalAddr(), err)
 		return
 	}
+
+	if _, ok := forbidHosts[host]; ok {
+		log.Println("host forbid", host)
+		return
+	}
 	debug.Println("connecting", host)
 
 	remote, err := net.Dial("tcp", host)
@@ -196,7 +201,7 @@ func (pm *PasswdManager) del(port string) {
 // port. A different approach would be directly change the password used by
 // that port, but that requires **sharing** password between the port listener
 // and password manager.
-func (pm *PasswdManager) updatePortPasswd(port, password string) {
+func (pm *PasswdManager) updatePortPasswd(port, password string, forbidHosts map[string]bool) {
 	pl, ok := pm.get(port)
 	if !ok {
 		log.Printf("new port %s added\n", port)
@@ -209,7 +214,7 @@ func (pm *PasswdManager) updatePortPasswd(port, password string) {
 	}
 	// run will add the new port listener to passwdManager.
 	// So there maybe concurrent access to passwdManager and we need lock to protect it.
-	go run(port, password)
+	go run(port, password, forbidHosts)
 }
 
 var passwdManager = PasswdManager{portListener: map[string]*PortListener{}}
@@ -227,8 +232,9 @@ func updatePasswd() {
 	if err = unifyPortPassword(config); err != nil {
 		return
 	}
+	forbidHosts := slice2Set(config.ForbidHost)
 	for port, passwd := range config.PortPassword {
-		passwdManager.updatePortPasswd(port, passwd)
+		passwdManager.updatePortPasswd(port, passwd, forbidHosts)
 		if oldconfig.PortPassword != nil {
 			delete(oldconfig.PortPassword, port)
 		}
