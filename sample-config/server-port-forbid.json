@@ -1,7 +1,7 @@
 {
-    "server":"45.32.248.143",
+    "server":"127.0.0.1",
     "port_password": {
-        "443": "jiaojiao"
+        "443": "test"
     },
     "port_acl": {
         "443": [
