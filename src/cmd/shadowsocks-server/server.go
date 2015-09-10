@@ -131,13 +131,18 @@ func handleConnection(conn *ss.Conn, acl util.Set) {
 		return
 	}
 
+	if !util.CheckHostValid(host) {
+		log.Println("invalid:", host)
+		return
+	}
+
 	if acl.Contains(host) {
-		debug.Println("host forbid:", host)
+		log.Println("forbid:", host)
 		return
 	}
 
 	hostPort := net.JoinHostPort(host, port)
-	debug.Printf("connecting", hostPort)
+	debug.Println("connecting", hostPort)
 	remote, err := net.Dial("tcp", hostPort)
 	if err != nil {
 		if ne, ok := err.(*net.OpError); ok && (ne.Err == syscall.EMFILE || ne.Err == syscall.ENFILE) {
@@ -292,13 +297,13 @@ func run(port, password string, ac *accessControl) {
 
 		clientIp := conn.RemoteAddr().String()
 		if ac.blackList.Contains(clientIp) {
-			debug.Printf("blacklist ip: %s\n", clientIp)
+			log.Printf("blacklist ip: %s\n", clientIp)
 			return
 		}
 
 		remoteIp := conn.LocalAddr()
 		if privateAddrs.Contains(remoteIp) {
-			debug.Printf("invalid remote ip: %s\n", remoteIp)
+			log.Printf("invalid remote ip: %s\n", remoteIp)
 			return
 		}
 
