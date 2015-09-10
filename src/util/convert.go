@@ -1,12 +1,12 @@
 package util
 
-func StringSliceToSet(hosts []string) Set {
-	if len(hosts) == 0 {
+func StringSliceToSet(slice []string) Set {
+	if len(slice) == 0 {
 		return nil
 	}
-	hostSet := NewSet()
-	for _, host := range hosts {
-		hostSet.Add(host)
+	sliceSet := NewSet()
+	for _, elem := range slice {
+		sliceSet.Add(elem)
 	}
-	return hostSet
+	return sliceSet
 }

@@ -15,6 +15,7 @@ import (
 	"os"
 	"reflect"
 	"time"
+	"util"
 )
 
 type Config struct {
@@ -34,8 +35,11 @@ type Config struct {
 	// instead of map to preserve the order.
 	ServerPassword [][]string `json:"server_password"`
 
-	// 按照端口禁止host,比如baidu.com
-	PortForbidHost map[string][]string `json:"port_forbid_host"`
+	// 访问控制列表，端口级配置,比如baidu.com
+	PortAcl map[string][]string `json:"port_acl"`
+
+	// ip黑名单，防止探测
+	BlackIp []string `json:"black_ip"`
 }
 
 var readTimeout time.Duration
@@ -69,6 +73,22 @@ func (config *Config) GetServerArray() []string {
 	}
 typeError:
 	panic(fmt.Sprintf("Config.Server type error %v", reflect.TypeOf(config.Server)))
+}
+
+func (config *Config) GetAcl(port string) (acls util.Set) {
+	portAcl := config.PortAcl
+	if acl, ok := portAcl[port]; ok {
+		acls = util.StringSliceToSet(acl)
+	} else {
+		acls = nil
+	}
+
+	return
+}
+
+func (config *Config) GetBlackIp() (blackIps util.Set) {
+	blackIp := config.BlackIp
+	return util.StringSliceToSet(blackIp)
 }
 
 func ParseConfig(path string) (config *Config, err error) {

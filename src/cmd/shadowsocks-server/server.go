@@ -13,7 +13,6 @@ import (
 	"runtime"
 	ss "shadowsocks"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"util"
@@ -21,7 +20,12 @@ import (
 
 var debug ss.DebugLog
 
-func getRequest(conn *ss.Conn) (host string, extra []byte, err error) {
+type accessControl struct {
+	acl       util.Set
+	blackList util.Set
+}
+
+func getRequest(conn *ss.Conn) (host, port string, extra []byte, err error) {
 	const (
 		idType  = 0 // address type index
 		idIP0   = 1 // ip addres start index
@@ -82,8 +86,7 @@ func getRequest(conn *ss.Conn) (host string, extra []byte, err error) {
 		host = string(buf[idDm0 : idDm0+buf[idDmLen]])
 	}
 	// parse port
-	port := binary.BigEndian.Uint16(buf[reqLen-2 : reqLen])
-	host = net.JoinHostPort(host, strconv.Itoa(int(port)))
+	port = strconv.Itoa(int(binary.BigEndian.Uint16(buf[reqLen-2 : reqLen])))
 	return
 }
 
@@ -91,9 +94,8 @@ const logCntDelta = 100
 
 var connCnt int
 var nextLogConnCnt int = logCntDelta
-var invalidHostPrefix = []string{"127.", "192.168.", "10."}
 
-func handleConnection(conn *ss.Conn, forbidHosts util.Set) {
+func handleConnection(conn *ss.Conn, acl util.Set) {
 	var host string
 
 	connCnt++ // this maybe not accurate, but should be enough
@@ -121,34 +123,27 @@ func handleConnection(conn *ss.Conn, forbidHosts util.Set) {
 		}
 	}()
 
-	host, extra, err := getRequest(conn)
+	host, port, extra, err := getRequest(conn)
 	if err != nil {
 		log.Println("error getting request", conn.RemoteAddr(), conn.LocalAddr(), err)
 		return
 	}
 
-	// 校验host合法性，不能是本地地址
-	for _, prefix := range invalidHostPrefix {
-		if strings.HasPrefix(host, prefix) {
-			log.Println("invalid host:", host)
-		}
-	}
-
-	// host是带有端口号
-	ipAddr := host[:strings.IndexByte(host, ':')]
-	if forbidHosts.Contains(ipAddr) {
+	if acl.Contains(host) {
 		debug.Println("host forbid:", host)
 		return
 	}
-	debug.Println("connecting", host)
-	remote, err := net.Dial("tcp", host)
+
+	hostPort := net.JoinHostPort(host, port)
+	debug.Printf("connecting", hostPort)
+	remote, err := net.Dial("tcp", hostPort)
 	if err != nil {
 		if ne, ok := err.(*net.OpError); ok && (ne.Err == syscall.EMFILE || ne.Err == syscall.ENFILE) {
 			// log too many open file error
 			// EMFILE is process reaches open file limits, ENFILE is system limit
 			log.Println("dial error:", err)
 		} else {
-			log.Println("error connecting to:", host, err)
+			log.Println("error connecting to:", hostPort, err)
 		}
 		return
 	}
@@ -166,7 +161,7 @@ func handleConnection(conn *ss.Conn, forbidHosts util.Set) {
 		}
 	}
 	if debug {
-		debug.Printf("piping %s<->%s", conn.RemoteAddr(), host)
+		debug.Printf("piping %s<->%s", conn.RemoteAddr(), hostPort)
 	}
 	go ss.PipeThenClose(conn, remote)
 	ss.PipeThenClose(remote, conn)
@@ -212,7 +207,7 @@ func (pm *PasswdManager) del(port string) {
 // port. A different approach would be directly change the password used by
 // that port, but that requires **sharing** password between the port listener
 // and password manager.
-func (pm *PasswdManager) updatePortPasswd(port, password string, forbidHosts util.Set) {
+func (pm *PasswdManager) updatePortPasswd(port, password string, ac *accessControl) {
 	pl, ok := pm.get(port)
 	if !ok {
 		log.Printf("new port %s added\n", port)
@@ -225,22 +220,10 @@ func (pm *PasswdManager) updatePortPasswd(port, password string, forbidHosts uti
 	}
 	// run will add the new port listener to passwdManager.
 	// So there maybe concurrent access to passwdManager and we need lock to protect it.
-	go run(port, password, forbidHosts)
+	go run(port, password, ac)
 }
 
 var passwdManager = PasswdManager{portListener: map[string]*PortListener{}}
-
-func getPortForbidHosts(config *ss.Config, port string) (hosts util.Set) {
-	hostConfig := config.PortForbidHost
-	if forbidHosts, ok := hostConfig[port]; ok {
-		hosts = util.StringSliceToSet(forbidHosts)
-	} else {
-		hosts = nil
-	}
-
-	log.Printf("port %s forbid:%v", port, hosts)
-	return
-}
 
 func updatePasswd() {
 	log.Println("updating password")
@@ -257,8 +240,11 @@ func updatePasswd() {
 	}
 
 	for port, passwd := range config.PortPassword {
-		forbidHosts := getPortForbidHosts(config, port)
-		passwdManager.updatePortPasswd(port, passwd, forbidHosts)
+		ac := &accessControl{
+			acl:       config.GetAcl(port),
+			blackList: config.GetBlackIp(),
+		}
+		passwdManager.updatePortPasswd(port, passwd, ac)
 		if oldconfig.PortPassword != nil {
 			delete(oldconfig.PortPassword, port)
 		}
@@ -285,7 +271,7 @@ func waitSignal() {
 	}
 }
 
-func run(port, password string, forbidHosts util.Set) {
+func run(port, password string, ac *accessControl) {
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Printf("error listening port %v: %v\n", port, err)
@@ -301,6 +287,12 @@ func run(port, password string, forbidHosts util.Set) {
 			debug.Printf("accept error: %v\n", err)
 			return
 		}
+
+		clientIp := conn.RemoteAddr().String()
+		if ac.blackList.Contains(clientIp) {
+			debug.Printf("blacklist ip: %s\n", clientIp)
+		}
+
 		// Creating cipher upon first connection.
 		if cipher == nil {
 			log.Println("creating cipher for port:", port)
@@ -311,7 +303,7 @@ func run(port, password string, forbidHosts util.Set) {
 				continue
 			}
 		}
-		go handleConnection(ss.NewConn(conn, cipher.Copy()), forbidHosts)
+		go handleConnection(ss.NewConn(conn, cipher.Copy()), ac.acl)
 	}
 }
 
@@ -389,9 +381,11 @@ func main() {
 	}
 
 	for port, password := range config.PortPassword {
-		forbidHosts := getPortForbidHosts(config, port)
-		go run(port, password, forbidHosts)
-
+		ac := &accessControl{
+			acl:       config.GetAcl(port),
+			blackList: config.GetBlackIp(),
+		}
+		go run(port, password, ac)
 	}
 
 	waitSignal()
