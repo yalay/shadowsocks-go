@@ -25,6 +25,8 @@ type accessControl struct {
 	blackList util.Set
 }
 
+var privateAddrs = util.NewSet("127.0.0.1")
+
 func getRequest(conn *ss.Conn) (host, port string, extra []byte, err error) {
 	const (
 		idType  = 0 // address type index
@@ -291,6 +293,13 @@ func run(port, password string, ac *accessControl) {
 		clientIp := conn.RemoteAddr().String()
 		if ac.blackList.Contains(clientIp) {
 			debug.Printf("blacklist ip: %s\n", clientIp)
+			return
+		}
+
+		remoteIp := conn.LocalAddr()
+		if privateAddrs.Contains(remoteIp) {
+			debug.Printf("invalid remote ip: %s\n", remoteIp)
+			return
 		}
 
 		// Creating cipher upon first connection.
