@@ -37,9 +37,6 @@ type Config struct {
 
 	// 访问控制列表，端口级配置,比如baidu.com
 	PortAcl map[string][]string `json:"port_acl"`
-
-	// ip黑名单，防止探测
-	BlackIp []string `json:"black_ip"`
 }
 
 var readTimeout time.Duration
@@ -84,11 +81,6 @@ func (config *Config) GetAcl(port string) (acls util.Set) {
 	}
 
 	return
-}
-
-func (config *Config) GetBlackIp() (blackIps util.Set) {
-	blackIp := config.BlackIp
-	return util.StringSliceToSet(blackIp)
 }
 
 func ParseConfig(path string) (config *Config, err error) {

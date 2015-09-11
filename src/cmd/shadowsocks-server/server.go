@@ -25,7 +25,7 @@ type accessControl struct {
 	blackList util.Set
 }
 
-var privateAddrs = util.NewSet("127.0.0.1")
+var privateIps = util.NewSet("127.0.0.1")
 
 func getRequest(conn *ss.Conn) (host, port string, extra []byte, err error) {
 	const (
@@ -131,13 +131,7 @@ func handleConnection(conn *ss.Conn, acl util.Set) {
 		return
 	}
 
-	if !util.CheckHostValid(host) {
-		log.Println("invalid:", host)
-		return
-	}
-
-	if acl.Contains(host) {
-		log.Println("forbid:", host)
+	if ConnNeedDeny(host, conn.LocalAddr().String(), acl) {
 		return
 	}
 
@@ -174,6 +168,25 @@ func handleConnection(conn *ss.Conn, acl util.Set) {
 	ss.PipeThenClose(remote, conn)
 	closed = true
 	return
+}
+
+func ConnNeedDeny(host, accessIp string, acl util.Set) bool {
+	if privateIps.Contains(accessIp) {
+		log.Printf("invalid access ip: %s\n", accessIp)
+		return true
+	}
+
+	if !util.CheckHostValid(host) {
+		log.Println("invalid:", host)
+		return true
+	}
+
+	if acl != nil && acl.Contains(host) {
+		log.Println("forbid:", host)
+		return true
+	}
+
+	return false
 }
 
 type PortListener struct {
@@ -214,7 +227,7 @@ func (pm *PasswdManager) del(port string) {
 // port. A different approach would be directly change the password used by
 // that port, but that requires **sharing** password between the port listener
 // and password manager.
-func (pm *PasswdManager) updatePortPasswd(port, password string, ac *accessControl) {
+func (pm *PasswdManager) updatePortPasswd(port, password string, config *ss.Config) {
 	pl, ok := pm.get(port)
 	if !ok {
 		log.Printf("new port %s added\n", port)
@@ -227,7 +240,7 @@ func (pm *PasswdManager) updatePortPasswd(port, password string, ac *accessContr
 	}
 	// run will add the new port listener to passwdManager.
 	// So there maybe concurrent access to passwdManager and we need lock to protect it.
-	go run(port, password, ac)
+	go run(port, password, config)
 }
 
 var passwdManager = PasswdManager{portListener: map[string]*PortListener{}}
@@ -247,11 +260,7 @@ func updatePasswd() {
 	}
 
 	for port, passwd := range config.PortPassword {
-		ac := &accessControl{
-			acl:       config.GetAcl(port),
-			blackList: config.GetBlackIp(),
-		}
-		passwdManager.updatePortPasswd(port, passwd, ac)
+		passwdManager.updatePortPasswd(port, passwd, config)
 		if oldconfig.PortPassword != nil {
 			delete(oldconfig.PortPassword, port)
 		}
@@ -278,7 +287,7 @@ func waitSignal() {
 	}
 }
 
-func run(port, password string, ac *accessControl) {
+func run(port, password string, config *ss.Config) {
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Printf("error listening port %v: %v\n", port, err)
@@ -295,18 +304,6 @@ func run(port, password string, ac *accessControl) {
 			return
 		}
 
-		clientIp := conn.RemoteAddr().String()
-		if ac.blackList.Contains(clientIp) {
-			log.Printf("blacklist ip: %s\n", clientIp)
-			return
-		}
-
-		remoteIp := conn.LocalAddr()
-		if privateAddrs.Contains(remoteIp) {
-			log.Printf("invalid remote ip: %s\n", remoteIp)
-			return
-		}
-
 		// Creating cipher upon first connection.
 		if cipher == nil {
 			log.Println("creating cipher for port:", port)
@@ -317,7 +314,7 @@ func run(port, password string, ac *accessControl) {
 				continue
 			}
 		}
-		go handleConnection(ss.NewConn(conn, cipher.Copy()), ac.acl)
+		go handleConnection(ss.NewConn(conn, cipher.Copy()), config.GetAcl(port))
 	}
 }
 
@@ -395,11 +392,7 @@ func main() {
 	}
 
 	for port, password := range config.PortPassword {
-		ac := &accessControl{
-			acl:       config.GetAcl(port),
-			blackList: config.GetBlackIp(),
-		}
-		go run(port, password, ac)
+		go run(port, password, config)
 	}
 
 	waitSignal()

@@ -410,6 +410,5 @@ func main() {
 	}
 
 	parseServerConfig(config)
-
 	run(cmdLocal + ":" + strconv.Itoa(config.LocalPort))
 }
